@@ -58,7 +58,7 @@ class Trainer(object):
         self.logger = logger
 
         self.input_dim = input_dim
-        self.model = Model(self.input_dim)
+        self.model = Model(self.input_dim).to(config.device)
         self.model.apply(self._weights_init)
         self.optimizer = optim.Adam(
             self.model.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8
@@ -75,8 +75,8 @@ class Trainer(object):
         self.steps = 0
         self.writer = tensorboard.SummaryWriter(log_dir=config.tensorboard_log_dir)
 
-        # e = torch.randn((2,4))
-        # x = torch.tensor([[1,2,3,4],[5,6,7,8]])
+        # e = torch.randn((2,4), device=self.config.device)
+        # x = torch.tensor([[1,2,3,4],[5,6,7,8]]).to(device=self.config.device)
         # print(self.q_sample(x, 10, e))
         # print(self.q_sample(x, 50, e))
         # print(self.q_sample(x, 100, e))
@@ -98,7 +98,7 @@ class Trainer(object):
             self.step_end()
 
     def step(self, x):
-        e = torch.randn(x.shape)
+        e = torch.rand_like(x, device=self.config.device)
         t = 0
         input = self.q_sample(x, t, e)
         output = self.model(torch.flatten(input), t)
@@ -132,20 +132,20 @@ class Trainer(object):
 
     def q_sample(self, x0, t, e=None):
         if e is None:
-            e = torch.rand_like(x0)
+            e = torch.rand_like(x0, device=self.config.device)
         return torch.sqrt(self.a_cum[t]) * x0 + torch.sqrt(1 - self.a_cum[t]) * e
 
     def sample(self, n: int):
-        xt = torch.Tensor(
+        xt = torch.tensor(
             [
                 [-0.5000, -0.4000, -0.3000, -0.2000],  # [0, 1, 2, 3]
                 [0.2000, 0.3000, 0.4000, 0.5000],  # [7, 8, 9, 10]
-            ]
+            ], device=self.config.device
         )
         xt = self.q_sample(xt, 0)
         ts = [0]
         for t in ts:
-            z = torch.randn((n, self.input_dim)) if t > 1 else 0
+            z = torch.randn((n, self.input_dim), device=self.config.device) if t > 1 else 0
             e = self.beta[t] / torch.sqrt(1 - self.a_cum[t]) * self.model(xt, t)
             xt = (xt - e) / torch.sqrt(1 - self.beta[t]) + self.sigma[t] * z
 
@@ -154,7 +154,7 @@ class Trainer(object):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument("--cpu", action="store_true", help="use cpu")
+    parser.add_argument("--device_name", default="mps", choices=["cpu", "mps"], help="which devices to run on")
     parser.add_argument("--dataroot", default="data", help="path to data")
     parser.add_argument(
         "--name",
@@ -178,8 +178,6 @@ if __name__ == "__main__":
     )
     config = parser.parse_args()
 
-    is_cpu = config.cpu or not torch.cuda.is_available()
-    config.device_name = "cpu" if is_cpu else "cuda:0"
     config.device = torch.device(config.device_name)
 
     config.tensorboard_log_dir = f"{config.dataroot}/runs/{config.name}"
