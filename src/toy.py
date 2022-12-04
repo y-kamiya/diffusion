@@ -98,7 +98,7 @@ class Trainer(object):
             self.step_end()
 
     def step(self, x):
-        e = torch.rand_like(x, device=self.config.device)
+        e = torch.randn_like(x, device=self.config.device)
         t = 0
         input = self.q_sample(x, t, e)
         output = self.model(torch.flatten(input), t)
@@ -132,7 +132,7 @@ class Trainer(object):
 
     def q_sample(self, x0, t, e=None):
         if e is None:
-            e = torch.rand_like(x0, device=self.config.device)
+            e = torch.randn_like(x0, device=self.config.device)
         return torch.sqrt(self.a_cum[t]) * x0 + torch.sqrt(1 - self.a_cum[t]) * e
 
     def sample(self, n: int):
