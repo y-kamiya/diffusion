@@ -154,7 +154,7 @@ class Trainer(object):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument("--device_name", default="mps", choices=["cpu", "mps"], help="which devices to run on")
+    parser.add_argument("--device_name", default="cpu", choices=["cpu", "mps"], help="which devices to run on")
     parser.add_argument("--dataroot", default="data", help="path to data")
     parser.add_argument(
         "--name",
