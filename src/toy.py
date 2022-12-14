@@ -37,16 +37,18 @@ class ToyDataset(utils.data.Dataset):
 
 
 class Model(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, T):
         super(Model, self).__init__()
         self.dim = dim
-        self.fc1 = nn.Linear(dim, 400)
+        self.T = T
+        self.fc1 = nn.Linear(dim + 1, 400)
         self.fc2 = nn.Linear(400, 400)
         self.fc3 = nn.Linear(400, 400)
         self.fc4 = nn.Linear(400, dim)
 
     def forward(self, x, t):
-        x = F.relu(self.fc1(x.view(-1, self.dim)))
+        x = torch.cat((x, t.unsqueeze(-1) / self.T), dim=1)
+        x = F.relu(self.fc1(x.view(-1, self.dim + 1)))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         return self.fc4(x)
@@ -58,7 +60,7 @@ class Trainer(object):
         self.logger = logger
 
         self.input_dim = input_dim
-        self.model = Model(self.input_dim).to(config.device)
+        self.model = Model(self.input_dim, config.T).to(config.device)
         self.model.apply(self._weights_init)
         self.optimizer = optim.Adam(
             self.model.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8
@@ -99,9 +101,9 @@ class Trainer(object):
 
     def step(self, x):
         e = torch.randn_like(x, device=self.config.device)
-        t = 0
+        t = torch.randint(0, self.config.T, (x.shape[0],), device=self.config.device)
         input = self.q_sample(x, t, e)
-        output = self.model(torch.flatten(input), t)
+        output = self.model(input, t)
 
         # print(f"noise: {e}")
         # print(f"x: {x}")
@@ -133,21 +135,17 @@ class Trainer(object):
     def q_sample(self, x0, t, e=None):
         if e is None:
             e = torch.randn_like(x0, device=self.config.device)
-        return torch.sqrt(self.a_cum[t]) * x0 + torch.sqrt(1 - self.a_cum[t]) * e
+        a_cum = self.a_cum[t].view(-1, 1)
+        return torch.sqrt(a_cum) * x0 + torch.sqrt(1 - a_cum) * e
 
+    @torch.no_grad()
     def sample(self, n: int):
-        xt = torch.tensor(
-            [
-                [-0.5000, -0.4000, -0.3000, -0.2000],  # [0, 1, 2, 3]
-                [0.2000, 0.3000, 0.4000, 0.5000],  # [7, 8, 9, 10]
-            ], device=self.config.device
-        )
-        xt = self.q_sample(xt, 0)
-        ts = [0]
+        xt = torch.randn((n, self.input_dim))
+        ts = range(self.config.T - 1, 0, -1)
         for t in ts:
             z = torch.randn((n, self.input_dim), device=self.config.device) if t > 1 else 0
-            e = self.beta[t] / torch.sqrt(1 - self.a_cum[t]) * self.model(xt, t)
-            xt = (xt - e) / torch.sqrt(1 - self.beta[t]) + self.sigma[t] * z
+            e = self.beta[t] / torch.sqrt(1 - self.a_cum[t]) * self.model(xt, torch.tensor(t).repeat(n))
+            xt = (xt - e) / torch.sqrt(1 - self.beta[t]) + torch.sqrt(self.sigma[t]) * z
 
         return xt
 
