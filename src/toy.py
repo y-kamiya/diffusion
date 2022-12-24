@@ -66,6 +66,10 @@ class Trainer(object):
             self.model.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8
         )
 
+        if os.path.isfile(config.model_path):
+            data = torch.load(config.model_path, map_location=self.config.device_name)
+            self.model.load_state_dict(data["model"])
+
         beta0 = 1e-4
         betaT = 2e-2
         self.beta = torch.linspace(beta0, betaT, config.T)
@@ -84,6 +88,13 @@ class Trainer(object):
         # print(self.q_sample(x, 100, e))
         # print(self.q_sample(x, 199, e))
         # sys.exit()
+
+    def save(self, epoch, model_path):
+        data = {
+            "model": self.model.state_dict(),
+        }
+        torch.save(data, model_path)
+        print(f"save model to {model_path}")
 
     def _weights_init(self, m):
         classname = m.__class__.__name__
@@ -128,6 +139,8 @@ class Trainer(object):
         self.model.eval()
         self.logger.info(f"evaluate epoch {epoch}")
 
+        self.save(epoch, self.config.model_path)
+
         samples = self.sample(2)
         print("samples")
         print(dataloader.dataset.denormalize(samples))
@@ -139,9 +152,15 @@ class Trainer(object):
         return torch.sqrt(a_cum) * x0 + torch.sqrt(1 - a_cum) * e
 
     @torch.no_grad()
-    def sample(self, n: int):
-        xt = torch.randn((n, self.input_dim))
-        ts = range(self.config.T - 1, 0, -1)
+    def sample(self, n: int, xt=None, t_start=None):
+        if xt is None:
+            xt = torch.randn((n, self.input_dim))
+            print(xt)
+
+        if t_start is None:
+            t_start = self.config.T - 1
+        ts = range(t_start, 0, -1)
+
         for t in ts:
             z = torch.randn((n, self.input_dim), device=self.config.device) if t > 1 else 0
             e = self.beta[t] / torch.sqrt(1 - self.a_cum[t]) * self.model(xt, torch.tensor(t).repeat(n))
@@ -174,9 +193,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--T", type=int, default=1000, help="time step of diffusion process"
     )
+    parser.add_argument("--sample_only", action="store_true")
+    parser.add_argument("--sample_from", type=float, nargs="*")
+    parser.add_argument("--sample_t_start", type=int, default=None)
+
     config = parser.parse_args()
 
     config.device = torch.device(config.device_name)
+    if config.model_path is None:
+        config.model_path = f'{config.dataroot}/{config.name}.pth'
 
     config.tensorboard_log_dir = f"{config.dataroot}/runs/{config.name}"
     os.makedirs(config.tensorboard_log_dir, exist_ok=True)
@@ -190,6 +215,14 @@ if __name__ == "__main__":
     dataloader = utils.data.DataLoader(
         dataset, batch_size=config.batch_size, shuffle=True
     )
+
+    if config.sample_only:
+        logger.info(f"sample from: {config.sample_from}, model_path: {config.model_path}")
+        n = 10
+        xt = None if config.sample_from is None else dataset.normalize(torch.tensor([config.sample_from] * n))
+        x0 = trainer.sample(n, xt, config.sample_t_start)
+        print(dataset.denormalize(x0))
+        sys.exit()
 
     for epoch in range(config.epochs):
         trainer.train(dataloader, epoch)
