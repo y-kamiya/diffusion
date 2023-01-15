@@ -4,63 +4,21 @@ import sys
 import time
 
 import torch
-import torch.nn.functional as F
 from logzero import setup_logger
-from torch import Tensor, nn, optim, utils
+from torch import nn, optim, utils
 from torch.utils import tensorboard
 from torchvision import datasets, transforms
 
-
-class ToyDataset(utils.data.Dataset):
-    def __init__(self, dim=4, num_max=8):
-        self.dim = dim
-        self.num_max = num_max
-
-        data = []
-        for i in range(num_max - dim + 1):
-            data.append(list(range(i, i + dim)))
-            data.append(list(range(i + dim - 1, i - 1, -1)))
-
-        self.data = self.normalize(torch.Tensor(data)).repeat(1000, 1)
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, index):
-        return self.data[index]
-
-    def normalize(self, x):
-        return 2 * x / (self.num_max - 1) - 1
-
-    def denormalize(self, x):
-        return (x + 1) * (self.num_max - 1) / 2
-
-
-class Model(nn.Module):
-    def __init__(self, dim, T):
-        super(Model, self).__init__()
-        self.dim = dim
-        self.T = T
-        self.fc1 = nn.Linear(dim + 1, 400)
-        self.fc2 = nn.Linear(400, 400)
-        self.fc3 = nn.Linear(400, 400)
-        self.fc4 = nn.Linear(400, dim)
-
-    def forward(self, x, t):
-        x = torch.cat((x, t.unsqueeze(-1) / self.T), dim=1)
-        x = F.relu(self.fc1(x.view(-1, self.dim + 1)))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-        return self.fc4(x)
+import models
 
 
 class Trainer(object):
-    def __init__(self, config, logger, input_dim):
+    def __init__(self, config, logger, input_shape):
         self.config = config
         self.logger = logger
 
-        self.input_dim = input_dim
-        self.model = Model(self.input_dim, config.T).to(config.device)
+        in_channels, *self.input_size = input_shape
+        self.model = models.Unet(in_channels=in_channels, dim_mults=(1,2,4)).to(config.device)
         self.model.apply(self._weights_init)
         self.optimizer = optim.Adam(
             self.model.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8
@@ -81,6 +39,12 @@ class Trainer(object):
         self.steps = 0
         self.writer = tensorboard.SummaryWriter(log_dir=config.tensorboard_log_dir)
 
+    @staticmethod
+    def extract(a, t, x_shape):
+        batch_size = t.shape[0]
+        out = a.gather(-1, t.cpu())
+        return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
+
     def save(self, epoch, model_path):
         data = {
             "model": self.model.state_dict(),
@@ -99,7 +63,7 @@ class Trainer(object):
         self.logger.info(f"start training epoch {epoch}")
         for (x, _) in dataloader:
             x = x.to(self.config.device)
-            self.step(x.view(x.shape[0], -1))
+            self.step(x)
             self.step_end()
 
     def step(self, x):
@@ -140,13 +104,13 @@ class Trainer(object):
     def q_sample(self, x0, t, e=None):
         if e is None:
             e = torch.randn_like(x0, device=self.config.device)
-        a_cum = self.a_cum[t].view(-1, 1)
+        a_cum = self.extract(self.a_cum, t, x0.shape)
         return torch.sqrt(a_cum) * x0 + torch.sqrt(1 - a_cum) * e
 
     @torch.no_grad()
     def sample(self, n: int, xt=None, t_start=None):
         if xt is None:
-            xt = torch.randn((n, self.input_dim))
+            xt = torch.randn((n, self.input_size))
             print(xt)
 
         if t_start is None:
@@ -155,7 +119,7 @@ class Trainer(object):
 
         for t in ts:
             z = (
-                torch.randn((n, self.input_dim), device=self.config.device)
+                torch.randn((n, self.input_size), device=self.config.device)
                 if t > 1
                 else 0
             )
@@ -213,9 +177,6 @@ if __name__ == "__main__":
 
     logger = setup_logger(name=__name__)
 
-    input_dim = 28 * 28
-    trainer = Trainer(config, logger, input_dim=input_dim)
-
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Lambda(lambda t: (t * 2) - 1),
@@ -224,6 +185,8 @@ if __name__ == "__main__":
     dataloader = utils.data.DataLoader(
         dataset, batch_size=config.batch_size, shuffle=True
     )
+
+    trainer = Trainer(config, logger, input_shape=(1, 28, 28))
 
     if config.sample_only:
         logger.info(
