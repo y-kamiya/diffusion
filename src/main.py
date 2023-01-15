@@ -8,8 +8,7 @@ import torch.nn.functional as F
 from logzero import setup_logger
 from torch import Tensor, nn, optim, utils
 from torch.utils import tensorboard
-from torchvision import datasets
-from torchvision.transforms import ToTensor
+from torchvision import datasets, transforms
 
 
 class ToyDataset(utils.data.Dataset):
@@ -98,9 +97,9 @@ class Trainer(object):
     def train(self, dataloader, epoch: int):
         self.model.train()
         self.logger.info(f"start training epoch {epoch}")
-        for x in dataloader:
+        for (x, _) in dataloader:
             x = x.to(self.config.device)
-            self.step(x)
+            self.step(x.view(x.shape[0], -1))
             self.step_end()
 
     def step(self, x):
@@ -214,10 +213,14 @@ if __name__ == "__main__":
 
     logger = setup_logger(name=__name__)
 
-    input_dim = 4
+    input_dim = 28 * 28
     trainer = Trainer(config, logger, input_dim=input_dim)
 
-    dataset = ToyDataset(input_dim, 2 * input_dim)
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Lambda(lambda t: (t * 2) - 1),
+    ])
+    dataset = datasets.MNIST(config.dataroot, train=True, download=True, transform=transform)
     dataloader = utils.data.DataLoader(
         dataset, batch_size=config.batch_size, shuffle=True
     )
@@ -239,5 +242,5 @@ if __name__ == "__main__":
     for epoch in range(config.epochs):
         trainer.train(dataloader, epoch)
 
-        if epoch % config.eval_interval_epochs == 0:
-            trainer.evaluate(dataloader, epoch)
+        # if epoch % config.eval_interval_epochs == 0:
+        #     trainer.evaluate(dataloader, epoch)
