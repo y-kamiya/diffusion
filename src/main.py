@@ -137,8 +137,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument(
         "--device_name",
-        default="cpu",
-        choices=["cpu", "mps"],
+        default="cuda",
+        choices=["cpu", "cuda", "mps"],
         help="which devices to run on",
     )
     parser.add_argument("--dataroot", default="data", help="path to data")
@@ -176,6 +176,7 @@ if __name__ == "__main__":
     os.makedirs(config.tensorboard_log_dir, exist_ok=True)
 
     logger = setup_logger(name=__name__)
+    logger.info(config)
 
     transform = transforms.Compose([
         transforms.ToTensor(),
