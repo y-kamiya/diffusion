@@ -10,6 +10,7 @@ from torch.utils import tensorboard
 from torchvision import datasets, transforms
 
 import models
+from datasets import ImageDataset
 
 
 class Trainer(object):
@@ -17,8 +18,8 @@ class Trainer(object):
         self.config = config
         self.logger = logger
 
-        in_channels, *self.input_size = input_shape
-        self.model = models.Unet(in_channels=in_channels, dim_mults=(1,2,4)).to(config.device)
+        self.input_shape = input_shape
+        self.model = models.Unet(in_channels=input_shape[0], dim_mults=(1,2,4)).to(config.device)
         self.model.apply(self._weights_init)
         self.optimizer = optim.Adam(
             self.model.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8
@@ -38,6 +39,9 @@ class Trainer(object):
 
         self.steps = 0
         self.writer = tensorboard.SummaryWriter(log_dir=config.tensorboard_log_dir)
+
+        self.sample_output_dir = f"{self.config.dataroot}/output/{self.config.name}"
+        os.makedirs(self.sample_output_dir, exist_ok=True)
 
     @staticmethod
     def extract(a, t, x_shape):
@@ -72,19 +76,13 @@ class Trainer(object):
         input = self.q_sample(x, t, e)
         output = self.model(input, t)
 
-        # print(f"noise: {e}")
-        # print(f"x: {x}")
-        # print(f"input : {input}")
-        # print(f"output: {output}")
-        # print(list(self.model.parameters()))
-
         loss = nn.functional.mse_loss(output, e)
         loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad()
 
         if self.steps % self.config.log_interval == 0:
-            logger.info(f"[train] step: {self.steps}, loss: {loss:.3f}")
+            self.logger.info(f"[train] step: {self.steps}, loss: {loss:.3f}")
         self.writer.add_scalar("loss/train", loss, self.steps, time.time())
 
     def step_end(self):
@@ -98,8 +96,7 @@ class Trainer(object):
         self.save(epoch, self.config.model_path)
 
         samples = self.sample(2)
-        print("samples")
-        print(dataloader.dataset.denormalize(samples))
+        self.save_samples(samples)
 
     def q_sample(self, x0, t, e=None):
         if e is None:
@@ -109,9 +106,9 @@ class Trainer(object):
 
     @torch.no_grad()
     def sample(self, n: int, xt=None, t_start=None):
+        shape = [n] + self.input_shape
         if xt is None:
-            xt = torch.randn((n, self.input_size))
-            print(xt)
+            xt = torch.randn(shape, device=self.config.device)
 
         if t_start is None:
             t_start = self.config.T - 1
@@ -119,21 +116,26 @@ class Trainer(object):
 
         for t in ts:
             z = (
-                torch.randn((n, self.input_size), device=self.config.device)
+                torch.randn(shape, device=self.config.device)
                 if t > 1
                 else 0
             )
-            e = (
-                self.beta[t]
-                / torch.sqrt(1 - self.a_cum[t])
-                * self.model(xt, torch.tensor(t).repeat(n))
-            )
-            xt = (xt - e) / torch.sqrt(1 - self.beta[t]) + torch.sqrt(self.sigma[t]) * z
+            t = torch.tensor(t, device=self.config.device).repeat(n)
+            bt = self.extract(self.beta, t, xt.shape)
+            sigmat = self.extract(self.sigma, t, xt.shape)
+            sqrt_at = torch.sqrt(1 - self.extract(self.a_cum, t, xt.shape))
+            e = bt / sqrt_at * self.model(xt, t)
+            xt = (xt - e) / torch.sqrt(1 - bt) + torch.sqrt(sigmat) * z
 
         return xt
 
+    def save_samples(self, samples):
+        imgs = [ImageDataset.denormalize(x) for x in samples]
+        for i, im in enumerate(imgs):
+            im.save(f"{self.sample_output_dir}/{i}.jpg", quality=100)
 
-if __name__ == "__main__":
+
+def main():
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument(
         "--device_name",
@@ -156,7 +158,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--eval_interval_epochs",
         type=int,
-        default=5,
+        default=1,
         help="evaluate by every this epochs ",
     )
     parser.add_argument(
@@ -178,16 +180,12 @@ if __name__ == "__main__":
     logger = setup_logger(name=__name__)
     logger.info(config)
 
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Lambda(lambda t: (t * 2) - 1),
-    ])
-    dataset = datasets.MNIST(config.dataroot, train=True, download=True, transform=transform)
+    dataset = ImageDataset(config)
     dataloader = utils.data.DataLoader(
         dataset, batch_size=config.batch_size, shuffle=True
     )
 
-    trainer = Trainer(config, logger, input_shape=(1, 28, 28))
+    trainer = Trainer(config, logger, input_shape=[1, 28, 28])
 
     if config.sample_only:
         logger.info(
@@ -197,14 +195,18 @@ if __name__ == "__main__":
         xt = (
             None
             if config.sample_from is None
-            else dataset.normalize(torch.tensor([config.sample_from] * n))
+            else dataset.normalize(torch.tensor([config.sample_from] * n, device=config.device))
         )
         x0 = trainer.sample(n, xt, config.sample_t_start)
-        print(dataset.denormalize(x0))
-        sys.exit()
+        trainer.save_samples(x0)
+        return
 
     for epoch in range(config.epochs):
         trainer.train(dataloader, epoch)
 
-        # if epoch % config.eval_interval_epochs == 0:
-        #     trainer.evaluate(dataloader, epoch)
+        if epoch % config.eval_interval_epochs == 0:
+            trainer.evaluate(dataloader, epoch)
+
+
+if __name__ == "__main__":
+    main()

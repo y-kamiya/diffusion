@@ -6,24 +6,6 @@ from torch import nn
 from einops import rearrange
 
 
-class SimpleMLP(nn.Module):
-    def __init__(self, dim, T):
-        super(SimpleMLP, self).__init__()
-        self.dim = dim
-        self.T = T
-        self.fc1 = nn.Linear(dim + 1, 400)
-        self.fc2 = nn.Linear(400, 400)
-        self.fc3 = nn.Linear(400, 400)
-        self.fc4 = nn.Linear(400, dim)
-
-    def forward(self, x, t):
-        x = torch.cat((x, t.unsqueeze(-1) / self.T), dim=1)
-        x = F.relu(self.fc1(x.view(-1, self.dim + 1)))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-        return self.fc4(x)
-
-
 class Residual(nn.Module):
     def __init__(self, fn):
         super(Residual, self).__init__()
