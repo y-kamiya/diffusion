@@ -12,7 +12,6 @@ from torchvision import datasets, transforms
 import models
 from datasets import ImageDataset
 
-
 torch.backends.cudnn.benchmark = True
 torch.backends.cuda.matmul.allow_tf32 = True
 
@@ -23,7 +22,9 @@ class Trainer(object):
         self.logger = logger
 
         self.input_shape = input_shape
-        self.model = models.Unet(in_channels=input_shape[0], dim_mults=(1,2,4)).to(config.device)
+        self.model = models.Unet(in_channels=input_shape[0], dim_mults=(1, 2, 4)).to(
+            config.device
+        )
         self.model.apply(self._weights_init)
         self.optimizer = optim.Adam(
             self.model.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8
@@ -85,9 +86,13 @@ class Trainer(object):
             self.step_end()
 
     def step(self, x):
-        with torch.autocast(device_type=self.config.device_name, enabled=self.config.fp16):
+        with torch.autocast(
+            device_type=self.config.device_name, enabled=self.config.fp16
+        ):
             e = torch.randn_like(x, device=self.config.device)
-            t = torch.randint(0, self.config.T, (x.shape[0],), device=self.config.device)
+            t = torch.randint(
+                0, self.config.T, (x.shape[0],), device=self.config.device
+            )
             input = self.q_sample(x, t, e)
             output = self.model(input, t)
             loss = nn.functional.mse_loss(output, e)
@@ -132,11 +137,7 @@ class Trainer(object):
         ts = range(t_start, 0, -1)
 
         for t in ts:
-            z = (
-                torch.randn(shape, device=self.config.device)
-                if t > 1
-                else 0
-            )
+            z = torch.randn(shape, device=self.config.device) if t > 1 else 0
             t = torch.tensor(t, device=self.config.device).repeat(n)
             bt = self.extract(self.beta, t, shape)
             sqrt_sigma_t = self.extract(self.sqrt_sigma, t, shape)
@@ -158,7 +159,11 @@ class Trainer(object):
         )
         xt = None
         if config.sample_from is not None:
-            xt = ImageDataset.normalize(torch.tensor([config.sample_from] * config.batch_size, device=config.device))
+            xt = ImageDataset.normalize(
+                torch.tensor(
+                    [config.sample_from] * config.batch_size, device=config.device
+                )
+            )
         x0 = self.sample(config.batch_size, xt, config.sample_t_start)
         self.save_samples(x0)
 

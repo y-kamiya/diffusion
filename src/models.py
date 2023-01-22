@@ -1,9 +1,10 @@
 import math
 from functools import partial
+
 import torch
 import torch.nn.functional as F
-from torch import nn
 from einops import rearrange
+from torch import nn
 
 
 class Residual(nn.Module):
@@ -27,7 +28,9 @@ class Down(nn.Module):
 class Up(nn.Module):
     def __init__(self, dim, dim_out):
         super(Up, self).__init__()
-        self.conv_trans = nn.ConvTranspose2d(dim, dim_out, kernel_size=4, stride=2, padding=1)
+        self.conv_trans = nn.ConvTranspose2d(
+            dim, dim_out, kernel_size=4, stride=2, padding=1
+        )
 
     def forward(self, x):
         return self.conv_trans(x)
@@ -69,7 +72,7 @@ class ResnetBlock(nn.Module):
 class MultiHeadAttention(nn.Module):
     def __init__(self, dim, n_heads=4, is_linear=False):
         super(MultiHeadAttention, self).__init__()
-        self.scale = dim ** -0.5
+        self.scale = dim**-0.5
         self.dim = dim
         self.n_heads = n_heads
         self.attention = self.linear_attention if is_linear else self.regular_attention
@@ -80,7 +83,7 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, x):
         batch_size, c, h, w = x.shape
-        assert c == self.dim, 'dimension mismatched'
+        assert c == self.dim, "dimension mismatched"
 
         def combine(x):
             x = x.transpose(1, 2)
@@ -150,17 +153,23 @@ class Unet(nn.Module):
             SinusoidalPositionEmbeddings(dim),
             nn.Linear(dim, time_dim),
             nn.GELU(),
-            nn.Linear(dim, time_dim)
+            nn.Linear(dim, time_dim),
         )
 
         self.downs = nn.ModuleList()
         for i, (d_in, d_out) in enumerate(in_out):
-            self.downs.append(nn.ModuleList([
-                resnet_block(d_in, d_out),
-                resnet_block(d_out, d_out),
-                Residual(PreNorm(d_out, MultiHeadAttention(d_out, is_linear=True))),
-                Down(d_out) if i != in_out_size - 1 else nn.Identity(),
-            ]))
+            self.downs.append(
+                nn.ModuleList(
+                    [
+                        resnet_block(d_in, d_out),
+                        resnet_block(d_out, d_out),
+                        Residual(
+                            PreNorm(d_out, MultiHeadAttention(d_out, is_linear=True))
+                        ),
+                        Down(d_out) if i != in_out_size - 1 else nn.Identity(),
+                    ]
+                )
+            )
 
         mid_dim = dims[-1]
         self.mid_block1 = resnet_block(mid_dim, mid_dim)
@@ -169,16 +178,21 @@ class Unet(nn.Module):
 
         self.ups = nn.ModuleList()
         for i, (d_in, d_out) in enumerate(reversed(in_out)):
-            self.ups.append(nn.ModuleList([
-                resnet_block(d_out * 2, d_out),
-                resnet_block(d_out, d_out),
-                Residual(PreNorm(d_out, MultiHeadAttention(d_out, is_linear=True))),
-                Up(d_out, d_in) if i != in_out_size - 1 else nn.Identity(),
-            ]))
+            self.ups.append(
+                nn.ModuleList(
+                    [
+                        resnet_block(d_out * 2, d_out),
+                        resnet_block(d_out, d_out),
+                        Residual(
+                            PreNorm(d_out, MultiHeadAttention(d_out, is_linear=True))
+                        ),
+                        Up(d_out, d_in) if i != in_out_size - 1 else nn.Identity(),
+                    ]
+                )
+            )
 
         self.out_conv = nn.Sequential(
-            resnet_block(dim, dim),
-            nn.Conv2d(dim, in_channels, 1)
+            resnet_block(dim, dim), nn.Conv2d(dim, in_channels, 1)
         )
 
     def forward(self, x, t):
