@@ -13,6 +13,10 @@ import models
 from datasets import ImageDataset
 
 
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+
+
 class Trainer(object):
     def __init__(self, config, logger, input_shape):
         self.config = config
@@ -24,10 +28,8 @@ class Trainer(object):
         self.optimizer = optim.Adam(
             self.model.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8
         )
-
-        if os.path.isfile(config.model_path):
-            data = torch.load(config.model_path, map_location=self.config.device_name)
-            self.model.load_state_dict(data["model"])
+        self.scaler = torch.cuda.amp.GradScaler(enabled=config.fp16)
+        self.load(config.model_path)
 
         beta0 = 1e-4
         betaT = 2e-2
@@ -52,9 +54,19 @@ class Trainer(object):
     def save(self, epoch, model_path):
         data = {
             "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "scaler": self.scaler.state_dict(),
         }
         torch.save(data, model_path)
-        print(f"save model to {model_path}")
+        self.logger.info(f"save model to {model_path}")
+
+    def load(self, model_path):
+        if os.path.isfile(model_path):
+            data = torch.load(model_path, map_location=self.config.device_name)
+            self.model.load_state_dict(data["model"])
+            self.optimizer.load_state_dict(data["optimizer"])
+            self.scaler.load_state_dict(data["scaler"])
+            self.logger.info(f"load model from {model_path}")
 
     def _weights_init(self, m):
         classname = m.__class__.__name__
@@ -71,14 +83,16 @@ class Trainer(object):
             self.step_end()
 
     def step(self, x):
-        e = torch.randn_like(x, device=self.config.device)
-        t = torch.randint(0, self.config.T, (x.shape[0],), device=self.config.device)
-        input = self.q_sample(x, t, e)
-        output = self.model(input, t)
+        with torch.autocast(device_type=self.config.device_name, enabled=self.config.fp16):
+            e = torch.randn_like(x, device=self.config.device)
+            t = torch.randint(0, self.config.T, (x.shape[0],), device=self.config.device)
+            input = self.q_sample(x, t, e)
+            output = self.model(input, t)
+            loss = nn.functional.mse_loss(output, e)
 
-        loss = nn.functional.mse_loss(output, e)
-        loss.backward()
-        self.optimizer.step()
+        self.scaler.scale(loss).backward()
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
         self.optimizer.zero_grad()
 
         if self.steps % self.config.log_interval == 0:
@@ -164,6 +178,7 @@ def main():
     parser.add_argument(
         "--T", type=int, default=1000, help="time step of diffusion process"
     )
+    parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--sample_only", action="store_true")
     parser.add_argument("--sample_from", type=float, nargs="*")
     parser.add_argument("--sample_t_start", type=int, default=None)
