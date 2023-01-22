@@ -151,6 +151,17 @@ class Trainer(object):
         for i, im in enumerate(imgs):
             im.save(f"{self.sample_output_dir}/{i}.jpg", quality=100)
 
+    def generate(self):
+        config = self.config
+        self.logger.info(
+            f"sample from: {config.sample_from}, model_path: {config.model_path}"
+        )
+        xt = None
+        if config.sample_from is not None:
+            xt = ImageDataset.normalize(torch.tensor([config.sample_from] * config.batch_size, device=config.device))
+        x0 = self.sample(config.batch_size, xt, config.sample_t_start)
+        self.save_samples(x0)
+
 
 def main():
     parser = argparse.ArgumentParser(add_help=True)
@@ -206,17 +217,7 @@ def main():
     trainer = Trainer(config, logger, input_shape=[1, 28, 28])
 
     if config.sample_only:
-        logger.info(
-            f"sample from: {config.sample_from}, model_path: {config.model_path}"
-        )
-        n = 10
-        xt = (
-            None
-            if config.sample_from is None
-            else dataset.normalize(torch.tensor([config.sample_from] * n, device=config.device))
-        )
-        x0 = trainer.sample(n, xt, config.sample_t_start)
-        trainer.save_samples(x0)
+        trainer.generate()
         return
 
     for epoch in range(config.epochs):
