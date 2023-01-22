@@ -35,9 +35,11 @@ class Trainer(object):
         betaT = 2e-2
         self.beta = torch.linspace(beta0, betaT, config.T)
 
-        self.a_cum = torch.cumprod(1 - self.beta, dim=0)
-        a_cum_prev = torch.cat((torch.Tensor([0]), self.a_cum[:-1]))
-        self.sigma = (1 - a_cum_prev) / (1 - self.a_cum) * self.beta
+        a_cum = torch.cumprod(1 - self.beta, dim=0)
+        self.sqrt_a_cum = torch.sqrt(a_cum)
+        self.sqrt_a_cum_inv = torch.sqrt(1 - a_cum)
+        a_cum_prev = torch.cat((torch.Tensor([0]), a_cum[:-1]))
+        self.sqrt_sigma = torch.sqrt((1 - a_cum_prev) / (1 - a_cum) * self.beta)
 
         self.steps = 0
         self.writer = tensorboard.SummaryWriter(log_dir=config.tensorboard_log_dir)
@@ -115,8 +117,9 @@ class Trainer(object):
     def q_sample(self, x0, t, e=None):
         if e is None:
             e = torch.randn_like(x0, device=self.config.device)
-        a_cum = self.extract(self.a_cum, t, x0.shape)
-        return torch.sqrt(a_cum) * x0 + torch.sqrt(1 - a_cum) * e
+        sqrt_a_cum_t = self.extract(self.sqrt_a_cum, t, x0.shape)
+        sqrt_a_cum_inv_t = self.extract(self.sqrt_a_cum_inv, t, x0.shape)
+        return sqrt_a_cum_t * x0 + sqrt_a_cum_inv_t * e
 
     @torch.no_grad()
     def sample(self, n: int, xt=None, t_start=None):
@@ -135,11 +138,11 @@ class Trainer(object):
                 else 0
             )
             t = torch.tensor(t, device=self.config.device).repeat(n)
-            bt = self.extract(self.beta, t, xt.shape)
-            sigmat = self.extract(self.sigma, t, xt.shape)
-            sqrt_at = torch.sqrt(1 - self.extract(self.a_cum, t, xt.shape))
-            e = bt / sqrt_at * self.model(xt, t)
-            xt = (xt - e) / torch.sqrt(1 - bt) + torch.sqrt(sigmat) * z
+            bt = self.extract(self.beta, t, shape)
+            sqrt_sigma_t = self.extract(self.sqrt_sigma, t, shape)
+            sqrt_a_cum_inv_t = self.extract(self.sqrt_a_cum_inv, t, shape)
+            e = bt / sqrt_a_cum_inv_t * self.model(xt, t)
+            xt = (xt - e) / torch.sqrt(1 - bt) + sqrt_sigma_t * z
 
         return xt
 
