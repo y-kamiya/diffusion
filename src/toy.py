@@ -76,8 +76,12 @@ class Trainer(object):
         self.beta = torch.linspace(beta0, betaT, config.T)
 
         self.a_cum = torch.cumprod(1 - self.beta, dim=0)
-        a_cum_prev = torch.cat((torch.Tensor([0]), self.a_cum[:-1]))
-        self.sigma = (1 - a_cum_prev) / (1 - self.a_cum) * self.beta
+        self.a_cum_prev = torch.cat((torch.Tensor([0]), self.a_cum[:-1]))
+
+        if config.sample_type == "ddpm":
+            self.sigma = (1 - self.a_cum_prev) / (1 - self.a_cum) * self.beta
+        elif config.sample_type == "ddim":
+            self.sigma = torch.zeros((config.T,), device=config.device)
 
         self.steps = 0
         self.writer = tensorboard.SummaryWriter(log_dir=config.tensorboard_log_dir)
@@ -156,6 +160,7 @@ class Trainer(object):
     def sample(self, n: int, xt=None, t_start=None):
         if xt is None:
             xt = torch.randn((n, self.input_dim))
+            # xt = xt[0].repeat(n, 1)
             print(xt)
 
         if t_start is None:
@@ -164,8 +169,11 @@ class Trainer(object):
 
         for t in ts:
             z = torch.randn((n, self.input_dim), device=self.config.device) if t > 1 else 0
-            e = self.beta[t] / torch.sqrt(1 - self.a_cum[t]) * self.model(xt, torch.tensor(t).repeat(n))
-            xt = (xt - e) / torch.sqrt(1 - self.beta[t]) + torch.sqrt(self.sigma[t]) * z
+            output = self.model(xt, torch.tensor(t).repeat(n))
+            predicted_x0 = (xt - torch.sqrt(1 - self.a_cum[t]) * output) / torch.sqrt(self.a_cum[t])
+            direction_xt = torch.sqrt(1 - self.a_cum_prev[t] - self.sigma[t]) * output
+            noise = torch.sqrt(self.sigma[t]) * z
+            xt = torch.sqrt(self.a_cum_prev[t]) * predicted_x0 + direction_xt + noise
 
         return xt
 
@@ -197,6 +205,7 @@ if __name__ == "__main__":
     parser.add_argument("--sample_only", action="store_true")
     parser.add_argument("--sample_from", type=float, nargs="*")
     parser.add_argument("--sample_t_start", type=int, default=None)
+    parser.add_argument("--sample_type", default="ddpm", choices=["ddpm", "ddim"])
 
     config = parser.parse_args()
 
