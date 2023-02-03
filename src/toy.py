@@ -161,11 +161,15 @@ class Trainer(object):
         if xt is None:
             xt = torch.randn((n, self.input_dim))
             # xt = xt[0].repeat(n, 1)
+            # xt = torch.tensor([0,0,0,0]).repeat(n, 1)
             print(xt)
 
         if t_start is None:
             t_start = self.config.T - 1
-        ts = range(t_start, 0, -1)
+
+        ts = list(range(t_start, 0, -self.config.sample_step_by))
+        if ts[-1] != 1:
+            ts.append(1)
 
         for t in ts:
             z = torch.randn((n, self.input_dim), device=self.config.device) if t > 1 else 0
@@ -206,6 +210,7 @@ if __name__ == "__main__":
     parser.add_argument("--sample_from", type=float, nargs="*")
     parser.add_argument("--sample_t_start", type=int, default=None)
     parser.add_argument("--sample_type", default="ddpm", choices=["ddpm", "ddim"])
+    parser.add_argument("--sample_step_by", type=int, default=1)
 
     config = parser.parse_args()
 
